@@ -137,6 +137,10 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
             VCS_REF=${{ github.sha }}
+          # Read by ci/scripts/gh-api.sh for the Dockerfile's version lookups.
+          # A secret mount stays out of the layers and the cache key.
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
         run: |

@@ -27,9 +27,9 @@ RUN \
     qt6-wayland-dev \
     qt6-wayland-private-dev
 
-RUN \
+RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-api.sh,target=/gh-api \
   echo "**** build dolphin ****" && \
-  DOLPHIN_VERSION=$(curl -sX GET "https://api.github.com/repos/dolphin-emu/dolphin/tags?per_page=50" \
+  DOLPHIN_VERSION=$(/gh-api "repos/dolphin-emu/dolphin/tags?per_page=50" \
     | jq -er '[.[].name | select(test("^[0-9]{4}[a-z]?$"))] | max') && \
   mkdir /root-out && \
   git clone https://github.com/dolphin-emu/dolphin.git && \
@@ -192,9 +192,9 @@ RUN \
     wayland-protocols \
     zlib1g-dev
 
-RUN \
+RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-api.sh,target=/gh-api \
   echo "**** build cemu ****" && \
-  CEMU_VERSION=$(curl -sX GET "https://api.github.com/repos/cemu-project/Cemu/releases/latest" \
+  CEMU_VERSION=$(/gh-api "repos/cemu-project/Cemu/releases/latest" \
     | jq -er '.tag_name') && \
   mkdir -p /root-out/usr/bin && \
   mkdir -p /root-out/usr/share/Cemu && \
@@ -280,7 +280,7 @@ ENV TITLE="Webstation" \
     DOOMWADDIR="/config" \
     PIXELFLUX_CU=5000
 
-RUN \
+RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-api.sh,target=/gh-api \
   mkdir -p /usr/share/webstation/versions.d && \
   echo "**** add icon ****" && \
   curl -o \
@@ -383,7 +383,7 @@ RUN \
     /tmp/autoconfig.zip \
     -d /usr/share/libretro/autoconfig && \
   echo "**** install azahar ****" && \
-  AZAHAR_URL=$(curl -sX GET "https://api.github.com/repos/azahar-emu/azahar/releases/latest" \
+  AZAHAR_URL=$(/gh-api "repos/azahar-emu/azahar/releases/latest" \
     | jq -er '.assets[] | select(.name == "azahar.AppImage") | .browser_download_url') && \
   echo "${AZAHAR_URL}" > /usr/share/webstation/versions.d/azahar && \
   curl -o \
@@ -400,7 +400,7 @@ RUN \
     /usr/bin/azahar && \
   echo "**** install dosbox ****" && \
   if [ -z ${DSTAGING_VERSION+x} ]; then \
-    DSTAGING_VERSION=$(curl -sX GET "https://api.github.com/repos/dosbox-staging/dosbox-staging/releases/latest" \
+    DSTAGING_VERSION=$(/gh-api "repos/dosbox-staging/dosbox-staging/releases/latest" \
     | jq -er '.tag_name'); \
   fi && \
   echo "${DSTAGING_VERSION}" > /usr/share/webstation/versions.d/dosbox-staging && \
@@ -412,7 +412,7 @@ RUN \
     /tmp/dosbox.tar.xz -C \
     /opt/dosbox --strip-components=1 && \
   echo "**** install duckstation ****" && \
-  DUCKSTATION_ASSET=$(curl -sX GET "https://api.github.com/repos/stenzek/duckstation/releases/latest" \
+  DUCKSTATION_ASSET=$(/gh-api "repos/stenzek/duckstation/releases/latest" \
     | jq -ec '.assets[] | select(.name == "DuckStation-x64.AppImage")') && \
   DUCKSTATION_URL=$(echo "${DUCKSTATION_ASSET}" | jq -er '.browser_download_url') && \
   echo "${DUCKSTATION_URL} $(echo "${DUCKSTATION_ASSET}" | jq -er '.updated_at')" > /usr/share/webstation/versions.d/duckstation && \
@@ -429,7 +429,7 @@ RUN \
     /opt/duckstation/AppRun \
     /usr/bin/duckstation-qt && \
   echo "**** install flycast ****" && \
-  FLYCAST_URL=$(curl -sX GET "https://api.github.com/repos/flyinghead/flycast/releases/latest" \
+  FLYCAST_URL=$(/gh-api "repos/flyinghead/flycast/releases/latest" \
     | jq -er '.assets[] | select(.name | endswith(".AppImage")) | .browser_download_url') && \
   echo "${FLYCAST_URL}" > /usr/share/webstation/versions.d/flycast && \
   curl -o \
@@ -445,7 +445,7 @@ RUN \
     /opt/flycast/AppRun \
     /usr/bin/flycast && \
   echo "**** install gzdoom ****" && \
-  GZDOOM_URL=$(curl -sX GET "https://api.github.com/repos/ZDoom/gzdoom/releases/latest" \
+  GZDOOM_URL=$(/gh-api "repos/ZDoom/gzdoom/releases/latest" \
     | jq -er '.assets[] | select(.name | endswith("_amd64.deb")) | .browser_download_url') && \
   echo "${GZDOOM_URL}" > /usr/share/webstation/versions.d/gzdoom && \
   curl -o \
@@ -454,7 +454,7 @@ RUN \
   cd /tmp && \
   apt install -y \
     ./gzdoom.deb && \
-  FREEDOOM_URL=$(curl -sX GET "https://api.github.com/repos/freedoom/freedoom/releases/latest" \
+  FREEDOOM_URL=$(/gh-api "repos/freedoom/freedoom/releases/latest" \
     | jq -er '.assets[] | select(.name | startswith("freedoom-") and endswith(".zip")) | .browser_download_url') && \
   echo "${FREEDOOM_URL}" > /usr/share/webstation/versions.d/freedoom && \
   curl -o \
@@ -469,7 +469,7 @@ RUN \
     /pak0.pak -L \
     https://github.com/pweil-/origin-quake/raw/refs/heads/master/id1/pak0.pak && \
   echo "**** install melonds ****" && \
-  MELONDS_VERSION=$(curl -sX GET "https://api.github.com/repos/melonDS-emu/melonDS/releases/latest" \
+  MELONDS_VERSION=$(/gh-api "repos/melonDS-emu/melonDS/releases/latest" \
     | jq -er '.tag_name') && \
   echo "${MELONDS_VERSION}" > /usr/share/webstation/versions.d/melonds && \
   curl -o \
@@ -481,7 +481,7 @@ RUN \
     melonDS \
     /usr/bin && \
   echo "**** install xenia-edge ****" && \
-  XENIA_VERSION=$(curl -sX GET "https://api.github.com/repos/has207/xenia-edge/releases/latest" \
+  XENIA_VERSION=$(/gh-api "repos/has207/xenia-edge/releases/latest" \
     | jq -er '.tag_name') && \
   echo "${XENIA_VERSION}" > /usr/share/webstation/versions.d/xenia-edge && \
   curl -o \
@@ -497,7 +497,7 @@ RUN \
     /opt/xenia/AppRun \
     /usr/bin/xenia && \
   echo "**** install modrinth ****" && \
-  MODRINTH_VERSION=$(curl -sX GET "https://api.github.com/repos/modrinth/code/releases/latest" \
+  MODRINTH_VERSION=$(/gh-api "repos/modrinth/code/releases/latest" \
     | jq -er '.tag_name') && \
   echo "${MODRINTH_VERSION}" > /usr/share/webstation/versions.d/modrinth && \
   curl -o \
@@ -506,7 +506,7 @@ RUN \
   apt-get install -y \
     /tmp/modrinth.deb && \
   echo "**** install rpcs3 ****" && \
-  RPCS3_URL=$(curl -sX GET "https://api.github.com/repos/RPCS3/rpcs3-binaries-linux/releases/latest" \
+  RPCS3_URL=$(/gh-api "repos/RPCS3/rpcs3-binaries-linux/releases/latest" \
     | jq -er '.assets[] | select(.name | endswith("_linux64.AppImage")) | .browser_download_url') && \
   echo "${RPCS3_URL}" > /usr/share/webstation/versions.d/rpcs3 && \
   curl -o \
@@ -526,7 +526,7 @@ RUN \
     scummvm && \
   echo "**** install xemu ****" && \
   mkdir /tmp/xemu && \
-  XEMU_URL=$(curl -sX GET "https://api.github.com/repos/xemu-project/xemu/releases" \
+  XEMU_URL=$(/gh-api "repos/xemu-project/xemu/releases" \
     | jq -er 'first(.[].assets[] | select(.name | endswith("-x86_64.AppImage") and (contains("dbg") | not)) | .browser_download_url)') && \
   echo "${XEMU_URL}" > /usr/share/webstation/versions.d/xemu && \
   curl -o \
@@ -555,7 +555,7 @@ RUN \
     /opt/esde && \
   echo "**** install shadps4qt ****" && \
   mkdir /tmp/shadps4 && \
-  SHADPS4_VERSION=$(curl -sX GET "https://api.github.com/repos/shadps4-emu/shadps4-qtlauncher/releases" \
+  SHADPS4_VERSION=$(/gh-api "repos/shadps4-emu/shadps4-qtlauncher/releases" \
     | jq -er '.[0].tag_name') && \
   echo "${SHADPS4_VERSION}" > /usr/share/webstation/versions.d/shadps4-qtlauncher && \
   SHORT_VERSION=$(echo "$SHADPS4_VERSION" | sed 's/shadPS4QtLauncher-//' | cut -c 1-18) && \
@@ -569,7 +569,7 @@ RUN \
   mv \
     squashfs-root \
     /opt/shadps4 && \
-  PKG_URL=$(curl -sX GET "https://api.github.com/repos/AzaharPlus/shadPS4Plus/releases/latest" \
+  PKG_URL=$(/gh-api "repos/AzaharPlus/shadPS4Plus/releases/latest" \
     | jq -er '.assets[] | select(.name | endswith("-linux.zip")) | .browser_download_url') && \
   echo "${PKG_URL}" > /usr/share/webstation/versions.d/shadps4-pkg-extractor && \
   curl -o \
@@ -585,7 +585,7 @@ RUN \
     /usr/local/bin/ && \
   echo "**** install flips ****" && \
   mkdir /tmp/flips && \
-  FLIPS_URL=$(curl -sLX GET "https://api.github.com/repos/Alcaro/Flips/releases/latest" \
+  FLIPS_URL=$(/gh-api "repos/Alcaro/Flips/releases/latest" \
     | jq -er '.assets[] | select(.name | endswith("-linux.zip")) | .browser_download_url') && \
   echo "${FLIPS_URL}" > /usr/share/webstation/versions.d/flips && \
   curl -o \
@@ -601,7 +601,7 @@ RUN \
   echo "**** install broker ****" && \
   mkdir -p /tmp/broker && \
   if [ -z ${BROKER_RELEASE+x} ]; then \
-    BROKER_RELEASE=$(curl -sX GET "https://api.github.com/repos/romm-streaming/romm-broker/releases/latest" \
+    BROKER_RELEASE=$(/gh-api "repos/romm-streaming/romm-broker/releases/latest" \
     | jq -er '.tag_name'); \
   fi && \
   echo "${BROKER_RELEASE}" > /usr/share/webstation/versions.d/romm-broker && \
