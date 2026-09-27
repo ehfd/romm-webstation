@@ -71,6 +71,18 @@ jobs:
               --jq "[.[] | ${active}] | length")
             echo $(( dispatched + pushed ))
           }
+          # A candidate that fails its tests never moves the channel tag, so the
+          # comparison above keeps finding a difference. Without this every
+          # poll would start another 75 minute build of the same broken ref
+          # and leave another untagged candidate behind. Dispatching build.yml
+          # by hand for that ref is the retry; once it passes it publishes and
+          # the difference goes away.
+          last_build_failed() {
+            local conclusion
+            conclusion=$(gh run list --workflow build.yml --status completed --limit 50 --json displayTitle,conclusion \
+              --jq "[.[] | select(.displayTitle | startswith(\"build $1 $2 \"))][0].conclusion // \"none\"")
+            [[ "${conclusion}" == "failure" ]]
+          }
 
           latest_release=$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)
           master_head=$(gh api "repos/${UPSTREAM}/commits/master" --jq .sha)
@@ -95,6 +107,9 @@ jobs:
           if [[ "${latest_release}" != "${published_stable}" ]]; then
             if [[ "$(build_in_flight stable)" != "0" ]]; then
               echo "- stable: a build is already in flight, not dispatching" >> "$GITHUB_STEP_SUMMARY"
+            elif last_build_failed stable "${latest_release}"; then
+              echo "::warning::the last stable build of ${latest_release} failed; dispatch build.yml by hand to retry it"
+              echo "- stable: last build of \`${latest_release}\` failed, not retrying automatically" >> "$GITHUB_STEP_SUMMARY"
             else
               gh workflow run build.yml \
                 -f broker_ref="${latest_release}" -f channel=stable -f publish=true -f force=true -f reason=release
@@ -107,6 +122,9 @@ jobs:
           if [[ "${master_head}" != "${published_dev}" ]]; then
             if [[ "$(build_in_flight dev)" != "0" ]]; then
               echo "- dev: a build is already in flight, not dispatching" >> "$GITHUB_STEP_SUMMARY"
+            elif last_build_failed dev "${master_head}"; then
+              echo "::warning::the last dev build of ${master_head} failed; dispatch build.yml by hand to retry it"
+              echo "- dev: last build of \`${master_head}\` failed, not retrying automatically" >> "$GITHUB_STEP_SUMMARY"
             else
               gh workflow run build.yml \
                 -f broker_ref="${master_head}" -f channel=dev -f publish=true -f force=false -f reason=commit
