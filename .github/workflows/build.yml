@@ -1,0 +1,408 @@
+# Build, test and publish the romm-webstation image.
+#
+# Three runners, because the image is about ten gigabytes uncompressed and a
+# GitHub hosted runner only guarantees fourteen free:
+#
+#   build    compiles and pushes the image to GHCR by digest only, untagged,
+#            so nothing user facing moves until the tests pass
+#   test     pulls that digest, records package versions, runs the smoke
+#            suite (boots the container, activates a desktop session, lands on
+#            it in a browser) and a report only vulnerability scan
+#   publish  points the real tags at the tested digest with imagetools, no
+#            re-upload, and on stable builds commits package_versions.txt
+#   cleanup  drops the untagged digest when a passing candidate was not published
+#
+# Triggered by check-upstream.yml and package-check.yml through
+# workflow_dispatch, by pr.yml through workflow_call, or by hand.
+name: Build image
+run-name: "build ${{ inputs.channel }} ${{ inputs.broker_ref }} (${{ inputs.reason }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      broker_ref:
+        description: romm-broker release tag (vX.Y.Z) for stable, full commit sha for dev
+        required: true
+        type: string
+      channel:
+        description: stable publishes latest/vX.Y.Z, dev publishes dev
+        required: true
+        type: choice
+        options: [stable, dev]
+        default: stable
+      publish:
+        description: Retag the tested digest and record package versions. Off is a dry run.
+        type: boolean
+        default: true
+      force:
+        description: Publish a stable build even when the package hash is unchanged
+        type: boolean
+        default: false
+      reason:
+        description: Free text shown in the run name
+        type: string
+        default: manual
+  workflow_call:
+    inputs:
+      broker_ref:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      publish:
+        type: boolean
+        default: true
+      force:
+        type: boolean
+        default: false
+      reason:
+        type: string
+        default: call
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  UPSTREAM: romm-streaming/romm-broker
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.meta.outputs.version }}
+      short_ref: ${{ steps.meta.outputs.short_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: ci/scripts/free-disk.sh
+
+      - name: Resolve build metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          ref='${{ inputs.broker_ref }}'
+          case '${{ inputs.channel }}' in
+            stable)
+              [[ "${ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "::error::stable builds need a vX.Y.Z tag, got ${ref}"; exit 1; }
+              version="${ref}"
+              short_ref="${ref}"
+              ;;
+            dev)
+              [[ "${ref}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::dev builds need a full commit sha, got ${ref}"; exit 1; }
+              short_ref="${ref:0:7}"
+              version="dev-${short_ref}"
+              ;;
+            *) echo "::error::unknown channel ${{ inputs.channel }}"; exit 1 ;;
+          esac
+          {
+            echo "image=${image}"
+            echo "version=${version}"
+            echo "short_ref=${short_ref}"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only: the manifest lands in the registry untagged and
+      # only the publish job gives it names. provenance is off so the result is
+      # a plain single arch manifest that imagetools and the label readers in
+      # check-upstream.yml can inspect without unwrapping an index.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.image }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            BROKER_RELEASE=${{ inputs.broker_ref }}
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Summary
+        run: |
+          {
+            echo "## Build"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| image | \`${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}\` |"
+            echo "| channel | ${{ inputs.channel }} |"
+            echo "| broker ref | [\`${{ inputs.broker_ref }}\`](https://github.com/${UPSTREAM}/tree/${{ inputs.broker_ref }}) |"
+            echo "| version | ${{ steps.meta.outputs.version }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      pkg_hash: ${{ steps.packages.outputs.pkg_hash }}
+      changed: ${{ steps.packages.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: ci/scripts/free-disk.sh
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the candidate
+        run: |
+          set -euo pipefail
+          docker pull '${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}'
+          docker tag '${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}' romm-webstation:candidate
+          docker image inspect romm-webstation:candidate --format 'size: {{.Size}} bytes'
+          docker image inspect romm-webstation:candidate --format '{{json .Config.Labels}}' | jq .
+
+      # The package hash is what makes the immutable tag. It is the md5 of
+      # syft's table plus the image's own versions manifest, so a new
+      # DuckStation AppImage moves it even though syft never sees AppImages.
+      - name: Record package versions
+        id: packages
+        run: |
+          set -euo pipefail
+          mkdir -p ci/artifacts
+          ci/scripts/package-versions.sh romm-webstation:candidate ci/artifacts/package_versions.txt ci/artifacts/sbom.json
+          pkg_hash=$(md5sum ci/artifacts/package_versions.txt | cut -c1-8)
+          old_hash=none
+          if [[ -f package_versions.txt ]]; then
+            old_hash=$(md5sum package_versions.txt | cut -c1-8)
+          fi
+          changed=false
+          if [[ "${pkg_hash}" != "${old_hash}" ]]; then
+            changed=true
+          fi
+          {
+            echo "pkg_hash=${pkg_hash}"
+            echo "old_hash=${old_hash}"
+            echo "changed=${changed}"
+          } | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "## Packages"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| package hash | \`${pkg_hash}\` |"
+            echo "| recorded in repo | \`${old_hash}\` |"
+            echo "| changed | ${changed} |"
+            echo
+            echo "<details><summary>versions manifest</summary>"
+            echo
+            echo '```'
+            sed -n '/^WEBSTATION VERSIONS MANIFEST$/,$p' ci/artifacts/package_versions.txt
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f package_versions.txt ]] && [[ "${changed}" == "true" ]]; then
+            {
+              echo "<details><summary>package diff</summary>"
+              echo
+              echo '```diff'
+              diff -u package_versions.txt ci/artifacts/package_versions.txt || true
+              echo '```'
+              echo
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ci/requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          pip install -r ci/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Smoke tests
+        id: smoke
+        env:
+          WEBSTATION_IMAGE: romm-webstation:candidate
+          WEBSTATION_ARTIFACTS: ${{ github.workspace }}/ci/artifacts
+        run: |
+          cd ci
+          python -m pytest -v --junitxml=artifacts/junit.xml
+
+      # Report only. Findings land in the run summary so a maintainer can read
+      # them; they do not block a release until someone decides on a threshold.
+      - name: Vulnerability scan
+        if: always() && steps.packages.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}/ci/artifacts:/scan" \
+            -e GRYPE_CHECK_FOR_APP_UPDATE=false \
+            ghcr.io/anchore/grype:latest sbom:/scan/sbom.json \
+            -o table --only-fixed > ci/artifacts/grype.txt || true
+          {
+            echo "## Vulnerabilities (fixed upstream, report only)"
+            echo
+            echo '```'
+            head -200 ci/artifacts/grype.txt
+            total=$(wc -l < ci/artifacts/grype.txt)
+            if (( total > 200 )); then echo "... $((total - 200)) more lines in the grype artifact"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test summary
+        if: always()
+        run: |
+          if [[ -f ci/artifacts/junit.xml ]]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          root = ET.parse("ci/artifacts/junit.xml").getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          a = suite.attrib
+          print("## Smoke tests\n")
+          print(f"{a.get('tests')} tests, {a.get('failures')} failures, {a.get('errors')} errors, {a.get('skipped')} skipped\n")
+          for tc in suite.iter("testcase"):
+              status = "pass"
+              for tag, label in (("failure", "FAIL"), ("error", "ERROR"), ("skipped", "skip")):
+                  if tc.find(tag) is not None:
+                      status = label
+              print(f"- {status}: `{tc.get('classname')}::{tc.get('name')}`")
+          PY
+          fi
+          if [[ -f ci/artifacts/desktop.png ]]; then
+            echo "Desktop screenshot is in the smoke-artifacts download." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ '${{ steps.smoke.outcome }}' != 'success' ]]; then
+            {
+              echo
+              echo "The failed candidate is kept untagged for debugging. Pull it with:"
+              echo
+              echo '```'
+              echo "docker pull ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}"
+              echo '```'
+              echo
+              echo "Delete it from the package's versions page when done."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-artifacts
+          path: ci/artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    name: Publish
+    needs: [build, test]
+    if: |
+      inputs.publish &&
+      (inputs.channel == 'dev' || inputs.force || needs.test.outputs.changed == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the tested digest
+        id: tags
+        run: |
+          set -euo pipefail
+          image='${{ needs.build.outputs.image }}'
+          digest='${{ needs.build.outputs.digest }}'
+          pkg='${{ needs.test.outputs.pkg_hash }}'
+          short='${{ needs.build.outputs.short_ref }}'
+          case '${{ inputs.channel }}' in
+            stable) tags=(latest "${short}" "${short}-${pkg}") ;;
+            dev)    tags=(dev "dev-${short}-${pkg}") ;;
+          esac
+          args=()
+          for t in "${tags[@]}"; do args+=(-t "${image}:${t}"); done
+          docker buildx imagetools create "${args[@]}" "${image}@${digest}"
+          echo "tags=${tags[*]}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Published"
+            echo
+            for t in "${tags[@]}"; do echo "- \`${image}:${t}\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/download-artifact@v4
+        if: inputs.channel == 'stable'
+        with:
+          name: smoke-artifacts
+          path: ci/artifacts
+
+      # Commits made with the workflow token do not trigger other workflows,
+      # which is what we want: the image this file describes has already been
+      # built, tested and tagged above. No PAT, nothing to rotate.
+      - name: Record package versions
+        if: inputs.channel == 'stable'
+        run: |
+          set -euo pipefail
+          cp ci/artifacts/package_versions.txt package_versions.txt
+          if git diff --quiet -- package_versions.txt; then
+            echo "package_versions.txt already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package_versions.txt
+          git commit -m "Bot Updating Package Versions" \
+            -m "romm-broker ${{ inputs.broker_ref }}, package hash ${{ needs.test.outputs.pkg_hash }}" \
+            -m "Tags: ${{ steps.tags.outputs.tags }}" \
+            -m "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --rebase
+          done
+          exit 1
+
+  # Only runs when the candidate passed its tests but was deliberately not
+  # published (a dry run, a pull request, or a weekly rebuild that changed
+  # nothing). A candidate that failed its tests is left in place, untagged, so
+  # it can be pulled by digest and debugged; the test summary prints the
+  # command.
+  cleanup:
+    name: Cleanup
+    needs: [build, test, publish]
+    if: always() && needs.build.result == 'success' && needs.test.result == 'success' && needs.publish.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete the untagged candidate
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ci/scripts/ghcr-delete-digest.sh '${{ github.repository_owner }}' "$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')" '${{ needs.build.outputs.digest }}'

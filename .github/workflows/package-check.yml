@@ -1,0 +1,46 @@
+# Weekly rebuild of the current stable release to pick up package updates.
+#
+# The broker may not have released anything, but the base image, apt
+# packages, and every emulator resolved to "latest" in the Dockerfile keep
+# moving. build.yml compares the resulting package hash with the one recorded
+# in package_versions.txt and only republishes latest / vX.Y.Z (and adds a new
+# vX.Y.Z-<hash> tag) when something actually changed. Dev is not rebuilt here:
+# it moves with every commit to master and gets the same updates then.
+name: Package check
+run-name: "package check"
+
+on:
+  schedule:
+    - cron: "30 5 * * 0"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  UPSTREAM: romm-streaming/romm-broker
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch a stable rebuild
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          latest_release=$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)
+          active='select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending")'
+          dispatched=$(gh run list --workflow build.yml --limit 30 --json displayTitle,status \
+            --jq "[.[] | ${active} | select(.displayTitle | test(\"^build stable \"))] | length")
+          pushed=$(gh run list --workflow push.yml --limit 10 --json status --jq "[.[] | ${active}] | length")
+          if (( dispatched + pushed > 0 )); then
+            echo "A stable build is already in flight; skipping this week's package check." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh workflow run build.yml \
+            -f broker_ref="${latest_release}" -f channel=stable -f publish=true -f force=false -f reason=package-check
+          echo "Dispatched package check build of \`${latest_release}\`." | tee -a "$GITHUB_STEP_SUMMARY"

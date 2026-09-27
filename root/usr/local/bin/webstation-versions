@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Print what this image resolved each upstream "latest" emulator to at build time.
+cd /usr/share/webstation/versions.d 2>/dev/null || { echo "no versions manifest in this image" >&2; exit 1; }
+for f in *; do printf "%-28s %s\n" "$f" "$(cat "$f")"; done

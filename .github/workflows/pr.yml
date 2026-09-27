@@ -1,0 +1,76 @@
+# Pull request checks: lint the pieces that can be linted, then run the full
+# build and smoke suite without publishing anything.
+#
+# The build step only runs for branches in this repository. A fork's token
+# cannot push the candidate image to GHCR, which the test runner needs to
+# pull it from, so fork PRs get the lint job and a maintainer runs build.yml
+# by hand with publish off if they want the full check.
+name: Pull request
+run-name: "pr #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+
+on:
+  pull_request:
+
+# Matches build.yml. A called workflow may not ask for more than its caller
+# holds, and GitHub refuses the call outright if it does. For a fork PR the
+# token is read only regardless and the build job is skipped anyway.
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq shellcheck >/dev/null
+          files=$(git ls-files 'ci/scripts/*.sh' 'ci/run-local.sh' 'root/usr/bin/*' 'root/usr/local/bin/*' 'root/etc/s6-overlay/s6-rc.d/*/run' 'root/defaults/*.sh')
+          echo "${files}"
+          # shellcheck disable=SC2086
+          shellcheck -s bash -e SC1091 ${files}
+
+      - name: Hadolint (informational)
+        continue-on-error: true
+        run: docker run --rm -i hadolint/hadolint hadolint --ignore DL3008 --ignore DL3003 --ignore DL3013 --ignore DL4006 --ignore SC2086 - < Dockerfile
+
+      - name: Workflow lint
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) >/dev/null
+          ./actionlint -color
+
+      - name: Python lint
+        run: |
+          pip install -q ruff
+          ruff check ci
+          ruff format --check ci
+
+  resolve:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+    steps:
+      - id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh api repos/romm-streaming/romm-broker/releases/latest --jq .tag_name)" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    uses: ./.github/workflows/build.yml
+    with:
+      broker_ref: ${{ needs.resolve.outputs.tag }}
+      channel: stable
+      publish: false
+      reason: pr

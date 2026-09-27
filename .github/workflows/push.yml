@@ -1,0 +1,68 @@
+# A change to this repository is a change to the image, so every push to the
+# default branch rebuilds both channels and publishes them regardless of
+# whether the package hash moved: the Dockerfile or the overlay did.
+#
+# Bot commits of package_versions.txt are made with the workflow token and
+# never trigger this. Documentation only changes are ignored by path.
+name: Push to main
+run-name: "build stable + dev (push ${{ github.sha }})"
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - ".editorconfig"
+      - ".gitignore"
+      - "package_versions.txt"
+
+permissions:
+  contents: write
+  packages: write
+
+# A newer push supersedes an older one that has not finished.
+concurrency:
+  group: push-main
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: romm-streaming/romm-broker
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.refs.outputs.release }}
+      head: ${{ steps.refs.outputs.head }}
+    steps:
+      - id: refs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            echo "release=$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)"
+            echo "head=$(gh api "repos/${UPSTREAM}/commits/master" --jq .sha)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  stable:
+    needs: resolve
+    uses: ./.github/workflows/build.yml
+    with:
+      broker_ref: ${{ needs.resolve.outputs.release }}
+      channel: stable
+      publish: true
+      force: true
+      reason: push
+
+  dev:
+    needs: resolve
+    uses: ./.github/workflows/build.yml
+    with:
+      broker_ref: ${{ needs.resolve.outputs.head }}
+      channel: dev
+      publish: true
+      force: true
+      reason: push

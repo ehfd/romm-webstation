@@ -1,0 +1,7 @@
+.jenkins-external
+.venv/
+ci/.venv/
+ci/artifacts/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

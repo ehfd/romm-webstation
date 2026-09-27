@@ -1,0 +1,23 @@
+#!/usr/bin/with-contenv bash
+
+# ensure master token is set
+if [ -z "${SELKIES_MASTER_TOKEN}" ]; then
+  SELKIES_MASTER_TOKEN=$(openssl rand -hex 24)
+  echo "[ls.io-init] Generated SELKIES_MASTER_TOKEN for this boot"
+fi
+printf "%s" "${SELKIES_MASTER_TOKEN}" > /run/s6/container_environment/SELKIES_MASTER_TOKEN
+
+# handle subfolder pathing
+SFOLDER="${SUBFOLDER:-/streaming/}"
+SFOLDER="/${SFOLDER#/}"
+SFOLDER="${SFOLDER%/}/"
+printf "%s" "${SFOLDER}stream/" > /run/s6/container_environment/SELKIES_SUBFOLDER
+printf "%s" "http://127.0.0.1:${CUSTOM_WS_PORT:-8082}${SFOLDER}stream" > /run/s6/container_environment/SELKIES_CONTROL_URL
+
+# modify nginx ports for broker
+NGINX_CONFIG=/etc/nginx/sites-available/default
+if [[ "${BROKER_DEV_MODE,,}" == "true" ]]; then
+  sed -i "s/BROKERWEB/5173/g" ${NGINX_CONFIG}
+else
+  sed -i "s/BROKERWEB/8000/g" ${NGINX_CONFIG}
+fi

@@ -1,0 +1,117 @@
+# Poll romm-broker and start a build when it has something we have not built.
+#
+# Nothing in romm-broker can push an event into this repository without a
+# token to rotate, so this runs on a schedule instead and compares:
+#
+#   latest GitHub release of romm-broker  vs  the broker-ref label on :latest
+#   head of romm-broker master            vs  the broker-ref label on :dev
+#
+# A difference dispatches build.yml for that channel, unless a build for the
+# same channel is already queued or running. Every stable release is picked
+# up this way. For master, whatever HEAD is at each poll gets built, so a
+# burst of commits inside one window produces one dev image.
+#
+# repository_dispatch is also accepted so the broker repository can fire this
+# immediately from its own release or push workflow later; the payload is
+# ignored and the same comparison runs.
+name: Check upstream
+run-name: "check upstream (${{ github.event_name }})"
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [broker-release, broker-push]
+
+permissions:
+  actions: write
+  contents: read
+  packages: read
+
+concurrency:
+  group: check-upstream
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: romm-streaming/romm-broker
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare upstream with published images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          IMAGE=$(echo "${IMAGE}" | tr '[:upper:]' '[:lower:]')
+
+          published_ref() {
+            docker buildx imagetools inspect "${IMAGE}:$1" --format '{{json .Image}}' 2>/dev/null \
+              | jq -r '.config.Labels["io.romm-streaming.webstation.broker-ref"] // "none"' || echo none
+          }
+          active='select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending" or .status == "requested")'
+          build_in_flight() {
+            # A dispatched build for this channel, or a push build (which covers both channels).
+            local dispatched pushed
+            dispatched=$(gh run list --workflow build.yml --limit 30 --json displayTitle,status \
+              --jq "[.[] | ${active} | select(.displayTitle | test(\"^build $1 \"))] | length")
+            pushed=$(gh run list --workflow push.yml --limit 10 --json status \
+              --jq "[.[] | ${active}] | length")
+            echo $(( dispatched + pushed ))
+          }
+
+          latest_release=$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)
+          master_head=$(gh api "repos/${UPSTREAM}/commits/master" --jq .sha)
+          published_stable=$(published_ref latest)
+          published_dev=$(published_ref dev)
+
+          {
+            echo "## Upstream check"
+            echo
+            echo "| channel | upstream | published |"
+            echo "|---|---|---|"
+            echo "| stable | \`${latest_release}\` | \`${published_stable}\` |"
+            echo "| dev | \`${master_head}\` | \`${published_dev}\` |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -z "${latest_release}" || "${latest_release}" == "null" ]]; then
+            echo "::error::could not read the latest romm-broker release"
+            exit 1
+          fi
+
+          if [[ "${latest_release}" != "${published_stable}" ]]; then
+            if [[ "$(build_in_flight stable)" != "0" ]]; then
+              echo "- stable: a build is already in flight, not dispatching" >> "$GITHUB_STEP_SUMMARY"
+            else
+              gh workflow run build.yml \
+                -f broker_ref="${latest_release}" -f channel=stable -f publish=true -f force=true -f reason=release
+              echo "- stable: dispatched build of \`${latest_release}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- stable: up to date" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "${master_head}" != "${published_dev}" ]]; then
+            if [[ "$(build_in_flight dev)" != "0" ]]; then
+              echo "- dev: a build is already in flight, not dispatching" >> "$GITHUB_STEP_SUMMARY"
+            else
+              gh workflow run build.yml \
+                -f broker_ref="${master_head}" -f channel=dev -f publish=true -f force=false -f reason=commit
+              echo "- dev: dispatched build of \`${master_head}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- dev: up to date" >> "$GITHUB_STEP_SUMMARY"
+          fi

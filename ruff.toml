@@ -1,0 +1,6 @@
+# Lint settings for the smoke suite under ci/.
+line-length = 110
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
