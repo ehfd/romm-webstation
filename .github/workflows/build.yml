@@ -541,7 +541,7 @@ jobs:
           git config user.name "romm-streaming-ci[bot]"
           git config user.email "334780872+romm-streaming-ci[bot]@users.noreply.github.com"
           git add package_versions.txt
-          git commit -m "Bot Updating Package Versions" \
+          git commit -m "chore: update package versions" \
             -m "romm-broker ${{ inputs.broker_ref }}, package hash ${{ needs.test.outputs.pkg_hash }}" \
             -m "Tags: ${{ steps.tags.outputs.tags }}" \
             -m "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
