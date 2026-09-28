@@ -108,12 +108,6 @@ jobs:
           set -euo pipefail
           repo="${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-emulators"
           matrix='[]'
-          {
-            echo "## Emulators"
-            echo
-            echo "| emulator | version | image |"
-            echo "|---|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
           for name in dolphin eden cemu; do
             version=$(ci/scripts/emulator-version.sh "${name}")
             # Everything from "FROM ... AS <name>-build" through the <name>-out
@@ -123,7 +117,6 @@ jobs:
             echo "${name}=${image}" >> "$GITHUB_OUTPUT"
             matrix=$(jq -c --arg n "${name}" --arg v "${version}" --arg i "${image}" \
               '. + [{name: $n, version: $v, image: $i, arg: "\($n | ascii_upcase)_VERSION=\($v)"}]' <<< "${matrix}")
-            echo "| ${name} | \`${version}\` | \`${image}\` |" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "matrix=${matrix}" | tee -a "$GITHUB_OUTPUT"
 
@@ -153,7 +146,7 @@ jobs:
         run: |
           if [[ '${{ inputs.rebuild_emulators }}' != 'true' ]] && docker buildx imagetools inspect '${{ matrix.image }}' > /dev/null 2>&1; then
             echo "hit=true" >> "$GITHUB_OUTPUT"
-            echo "- ${{ matrix.name }} ${{ matrix.version }}: cached" >> "$GITHUB_STEP_SUMMARY"
+            echo "${{ matrix.name }} ${{ matrix.version }}: cached as ${{ matrix.image }}"
           else
             echo "hit=false" >> "$GITHUB_OUTPUT"
           fi
@@ -277,7 +270,11 @@ jobs:
           secrets: |
             github_token=${{ secrets.GITHUB_TOKEN }}
 
+      # The emulator jobs write no summary of their own, so the run page
+      # opens on this one; their versions and images are listed here.
       - name: Summary
+        env:
+          EMULATORS: ${{ needs.emulators.outputs.matrix }}
         run: |
           {
             echo "## Build"
@@ -288,6 +285,7 @@ jobs:
             echo "| channel | ${{ inputs.channel }} |"
             echo "| broker ref | [\`${{ inputs.broker_ref }}\`](https://github.com/${UPSTREAM}/tree/${{ inputs.broker_ref }}) |"
             echo "| version | ${{ steps.meta.outputs.version }} |"
+            jq -r '.[] | "| \(.name) | `\(.version)` <sub>`\(.image | split(":")[1])`</sub> |"' <<< "${EMULATORS}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resource usage
