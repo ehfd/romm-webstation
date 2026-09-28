@@ -1,4 +1,12 @@
-FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS dolphin
+# Dolphin, Eden and Cemu are compiled from source, which is most of the build
+# time. CI builds each one once per upstream version as its own small image
+# (the *-out stages) and passes it in through these; a plain local build
+# leaves them at their defaults and compiles all three here.
+ARG DOLPHIN_IMAGE=dolphin-out
+ARG EDEN_IMAGE=eden-out
+ARG CEMU_IMAGE=cemu-out
+
+FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS dolphin-build
 
 RUN \
   echo "**** install build deps ****" && \
@@ -27,10 +35,12 @@ RUN \
     qt6-wayland-dev \
     qt6-wayland-private-dev
 
-RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-api.sh,target=/gh-api \
+ARG DOLPHIN_VERSION
+RUN --mount=type=secret,id=github_token \
+  --mount=type=bind,source=ci/scripts/gh-api.sh,target=/ci/gh-api.sh \
+  --mount=type=bind,source=ci/scripts/emulator-version.sh,target=/ci/emulator-version.sh \
   echo "**** build dolphin ****" && \
-  DOLPHIN_VERSION=$(/gh-api "repos/dolphin-emu/dolphin/tags?per_page=50" \
-    | jq -er '[.[].name | select(test("^[0-9]{4}[a-z]?$"))] | max') && \
+  DOLPHIN_VERSION=${DOLPHIN_VERSION:-$(/ci/emulator-version.sh dolphin)} && \
   mkdir /root-out && \
   git clone https://github.com/dolphin-emu/dolphin.git && \
   cd dolphin && \
@@ -45,7 +55,10 @@ RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-a
   mkdir -p /root-out/usr/share/webstation/versions.d && \
   echo "${DOLPHIN_VERSION}" > /root-out/usr/share/webstation/versions.d/dolphin
 
-FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS eden
+FROM scratch AS dolphin-out
+COPY --from=dolphin-build /root-out/ /
+
+FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS eden-build
 
 RUN \
   echo "**** install build deps ****" && \
@@ -110,12 +123,12 @@ RUN \
     vulkan-utility-libraries-dev \
     zlib1g-dev
 
-RUN \
+ARG EDEN_VERSION
+RUN --mount=type=bind,source=ci/scripts/emulator-version.sh,target=/ci/emulator-version.sh \
   echo "**** build eden ****" && \
   mkdir -p /root-out/usr/bin && \
   mkdir -p /root-out/usr/share/icons/hicolor/scalable/apps/ && \
-  EDEN_VERSION=$(curl -sX GET 'https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases/latest' \
-    | jq -er '.tag_name') && \
+  EDEN_VERSION=${EDEN_VERSION:-$(/ci/emulator-version.sh eden)} && \
   git clone https://git.eden-emu.dev/eden-emu/eden.git && \
   cd eden/ && \
   git checkout -f ${EDEN_VERSION} && \
@@ -152,7 +165,10 @@ RUN \
   mkdir -p /root-out/usr/share/webstation/versions.d && \
   echo "${EDEN_VERSION}" > /root-out/usr/share/webstation/versions.d/eden
 
-FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS cemu
+FROM scratch AS eden-out
+COPY --from=eden-build /root-out/ /
+
+FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute AS cemu-build
 
 RUN \
   echo "**** install build deps ****" && \
@@ -192,10 +208,12 @@ RUN \
     wayland-protocols \
     zlib1g-dev
 
-RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-api.sh,target=/gh-api \
+ARG CEMU_VERSION
+RUN --mount=type=secret,id=github_token \
+  --mount=type=bind,source=ci/scripts/gh-api.sh,target=/ci/gh-api.sh \
+  --mount=type=bind,source=ci/scripts/emulator-version.sh,target=/ci/emulator-version.sh \
   echo "**** build cemu ****" && \
-  CEMU_VERSION=$(/gh-api "repos/cemu-project/Cemu/releases/latest" \
-    | jq -er '.tag_name') && \
+  CEMU_VERSION=${CEMU_VERSION:-$(/ci/emulator-version.sh cemu)} && \
   mkdir -p /root-out/usr/bin && \
   mkdir -p /root-out/usr/share/Cemu && \
   mkdir -p /root-out/usr/share/icons/hicolor/128x128/apps && \
@@ -253,6 +271,14 @@ RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-a
     /root-out/usr/share/icons/hicolor/128x128/apps/info.cemu.Cemu.png && \
   mkdir -p /root-out/usr/share/webstation/versions.d && \
   echo "${CEMU_VERSION}" > /root-out/usr/share/webstation/versions.d/cemu
+
+FROM scratch AS cemu-out
+COPY --from=cemu-build /root-out/ /
+
+# Whichever the *_IMAGE args picked: a stage above, or a prebuilt image.
+FROM ${DOLPHIN_IMAGE} AS dolphin
+FROM ${EDEN_IMAGE} AS eden
+FROM ${CEMU_IMAGE} AS cemu
 
 # runtime stage
 FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute
@@ -639,9 +665,9 @@ RUN --mount=type=secret,id=github_token --mount=type=bind,source=ci/scripts/gh-a
     /var/tmp/* 
 
 # add local files and files from build stages
-COPY --from=cemu /root-out/ /
-COPY --from=dolphin /root-out/ /
-COPY --from=eden /root-out/ /
+COPY --from=cemu / /
+COPY --from=dolphin / /
+COPY --from=eden / /
 COPY /root /
 
 # ports and volumes

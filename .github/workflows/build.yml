@@ -1,8 +1,14 @@
 # Build, test and publish the romm-webstation image.
 #
-# Three runners, because the image is about ten gigabytes uncompressed and a
-# GitHub hosted runner only guarantees fourteen free:
+# Separate runners, because the image is about ten gigabytes uncompressed and
+# a GitHub hosted runner only guarantees fourteen free:
 #
+#   emulators  resolves the Dolphin, Eden and Cemu versions to build and
+#              names a cached image for each in romm-webstation-emulators
+#   emulator   one per emulator: compiles it and pushes that image, unless
+#              the tag is already there. Tags carry the upstream version and
+#              a hash of the Dockerfile stage, so a new release or a changed
+#              build recipe compiles again and nothing else does.
 #   build    compiles and pushes the image to GHCR by digest only, untagged,
 #            so nothing user facing moves until the tests pass
 #   test     pulls that digest, records package versions, runs the smoke
@@ -42,6 +48,10 @@ on:
         description: Free text shown in the run name
         type: string
         default: manual
+      rebuild_emulators:
+        description: Compile Dolphin, Eden and Cemu again even if their cached images exist
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       broker_ref:
@@ -59,6 +69,9 @@ on:
       reason:
         type: string
         default: call
+      rebuild_emulators:
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -69,8 +82,118 @@ env:
   UPSTREAM: romm-streaming/romm-broker
 
 jobs:
+  emulators:
+    name: Resolve emulators
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.refs.outputs.matrix }}
+      dolphin: ${{ steps.refs.outputs.dolphin }}
+      eden: ${{ steps.refs.outputs.eden }}
+      cemu: ${{ steps.refs.outputs.cemu }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve versions and cache tags
+        id: refs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-emulators"
+          matrix='[]'
+          {
+            echo "## Emulators"
+            echo
+            echo "| emulator | version | image |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in dolphin eden cemu; do
+            version=$(ci/scripts/emulator-version.sh "${name}")
+            # Everything from "FROM ... AS <name>-build" through the <name>-out
+            # stage: build deps, flags, pinned helpers like Cemu's glslang.
+            recipe=$(awk -v n="${name}" '/^FROM / { on = ($0 ~ (" AS " n "-(build|out)$")) } on' Dockerfile | sha256sum | cut -c1-8)
+            image="${repo}:${name}-$(printf '%s' "${version}" | tr -c 'A-Za-z0-9_.-' '-')-${recipe}"
+            echo "${name}=${image}" >> "$GITHUB_OUTPUT"
+            matrix=$(jq -c --arg n "${name}" --arg v "${version}" --arg i "${image}" \
+              '. + [{name: $n, version: $v, image: $i, arg: "\($n | ascii_upcase)_VERSION=\($v)"}]' <<< "${matrix}")
+            echo "| ${name} | \`${version}\` | \`${image}\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "matrix=${matrix}" | tee -a "$GITHUB_OUTPUT"
+
+  # Always runs all three, so the jobs after it never see a skipped
+  # dependency; a cache hit finishes in seconds. The concurrency group holds
+  # a second build of the same emulator (stable and dev from one push) until
+  # the first has pushed, and the re-check below then finds it.
+  emulator:
+    name: Emulator (${{ matrix.name }})
+    needs: emulators
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.emulators.outputs.matrix) }}
+    concurrency:
+      group: emulator-${{ matrix.image }}
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Look for the cached image
+        id: cache
+        run: |
+          if [[ '${{ inputs.rebuild_emulators }}' != 'true' ]] && docker buildx imagetools inspect '${{ matrix.image }}' > /dev/null 2>&1; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "- ${{ matrix.name }} ${{ matrix.version }}: cached" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.cache.outputs.hit != 'true'
+
+      - name: Free disk space
+        if: steps.cache.outputs.hit != 'true'
+        run: ci/scripts/free-disk.sh
+
+      - name: Start resource monitor
+        if: steps.cache.outputs.hit != 'true'
+        run: ci/scripts/resource-monitor.sh start
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.cache.outputs.hit != 'true'
+
+      - name: Compile and push
+        if: steps.cache.outputs.hit != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ${{ matrix.name }}-out
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          push: true
+          tags: ${{ matrix.image }}
+          # Links the new package to this repository, so its permissions
+          # follow the repository's and the workflow token can push to it.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ matrix.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: ${{ matrix.arg }}
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resource usage
+        if: always() && steps.cache.outputs.hit != 'true'
+        run: ci/scripts/resource-monitor.sh report
+
   build:
     name: Build
+    needs: [emulators, emulator]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -140,6 +263,9 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
             VCS_REF=${{ github.sha }}
+            DOLPHIN_IMAGE=${{ needs.emulators.outputs.dolphin }}
+            EDEN_IMAGE=${{ needs.emulators.outputs.eden }}
+            CEMU_IMAGE=${{ needs.emulators.outputs.cemu }}
           # Read by ci/scripts/gh-api.sh for the Dockerfile's version lookups.
           # A secret mount stays out of the layers and the cache key.
           secrets: |

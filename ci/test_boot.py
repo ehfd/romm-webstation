@@ -116,3 +116,17 @@ def test_build_version_file(station: Station) -> None:
 def test_broker_package_installed(station: Station) -> None:
     out = station.sh("pip show webstation-broker 2>/dev/null | awk '/^Version:/ {print $2}'")
     assert re.fullmatch(r"\d+\.\d+\.\d+", out.strip()), f"unexpected broker version {out!r}"
+
+
+# Built in their own images and cached by upstream version (build.yml), so
+# they can be older than the runtime image they are copied into. A library
+# the base dropped or bumped a soname on shows up here, not at launch.
+COMPILED_EMULATORS = ("/usr/local/bin/dolphin-emu", "/usr/bin/eden", "/usr/bin/Cemu")
+
+
+@pytest.mark.parametrize("binary", COMPILED_EMULATORS)
+def test_compiled_emulator_links(station: Station, binary: str) -> None:
+    r = station.exec("ldd", binary, check=False)
+    assert r.returncode == 0, f"ldd {binary} failed: {r.stdout}{r.stderr}"
+    unresolved = [line.strip() for line in r.stdout.splitlines() if "not found" in line]
+    assert not unresolved, f"{binary} has unresolved libraries: {unresolved}"
