@@ -84,6 +84,9 @@ jobs:
       - name: Free disk space
         run: ci/scripts/free-disk.sh
 
+      - name: Start resource monitor
+        run: ci/scripts/resource-monitor.sh start
+
       - name: Resolve build metadata
         id: meta
         run: |
@@ -155,6 +158,10 @@ jobs:
             echo "| version | ${{ steps.meta.outputs.version }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Resource usage
+        if: always()
+        run: ci/scripts/resource-monitor.sh report
+
   test:
     name: Test
     needs: build
@@ -168,6 +175,9 @@ jobs:
 
       - name: Free disk space
         run: ci/scripts/free-disk.sh
+
+      - name: Start resource monitor
+        run: ci/scripts/resource-monitor.sh start
 
       - uses: docker/login-action@v4
         with:
@@ -311,6 +321,10 @@ jobs:
               echo "Delete it from the package's versions page when done."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Resource usage
+        if: always()
+        run: ci/scripts/resource-monitor.sh report
 
       - uses: actions/upload-artifact@v7
         if: always()
