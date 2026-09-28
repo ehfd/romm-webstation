@@ -56,6 +56,8 @@ jobs:
       publish: true
       force: true
       reason: push
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   dev:
     needs: resolve

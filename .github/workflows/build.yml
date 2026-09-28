@@ -72,6 +72,12 @@ on:
       rebuild_emulators:
         type: boolean
         default: false
+    # A called workflow sees only the secrets its caller passes. The stable
+    # publish needs the app key to commit package_versions.txt; dev and PR
+    # callers leave it out.
+    secrets:
+      APP_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: write
