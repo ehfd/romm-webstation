@@ -386,7 +386,7 @@ jobs:
             -m "romm-broker ${{ inputs.broker_ref }}, package hash ${{ needs.test.outputs.pkg_hash }}" \
             -m "Tags: ${{ steps.tags.outputs.tags }}" \
             -m "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          for attempt in 1 2 3; do
+          for _ in 1 2 3; do
             if git push; then exit 0; fi
             git pull --rebase
           done
