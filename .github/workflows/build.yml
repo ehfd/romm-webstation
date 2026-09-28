@@ -469,9 +469,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # main's ruleset requires pull requests, and GitHub will not accept the
+      # workflow token as a bypass actor. The romm-streaming-ci app is the one
+      # exemption; its token is scoped to this repository's contents and
+      # expires within the hour. Only stable builds commit anything.
+      - uses: actions/create-github-app-token@v3
+        id: app
+        if: inputs.channel == 'stable'
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - uses: actions/checkout@v7
+        if: inputs.channel == 'stable'
         with:
           ref: ${{ github.event.repository.default_branch }}
+          token: ${{ steps.app.outputs.token }}
 
       - uses: docker/login-action@v4
         with:
@@ -507,9 +521,10 @@ jobs:
           name: smoke-artifacts
           path: ci/artifacts
 
-      # Commits made with the workflow token do not trigger other workflows,
-      # which is what we want: the image this file describes has already been
-      # built, tested and tagged above. No PAT, nothing to rotate.
+      # Unlike the workflow token, an app's push does start other workflows.
+      # push.yml ignores package_versions.txt by path, so this commit does not
+      # rebuild the image it describes. These commits are also what keeps the
+      # repository active, so GitHub never disables its scheduled workflows.
       - name: Record package versions
         if: inputs.channel == 'stable'
         run: |
@@ -519,8 +534,8 @@ jobs:
             echo "package_versions.txt already up to date"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "romm-streaming-ci[bot]"
+          git config user.email "334780872+romm-streaming-ci[bot]@users.noreply.github.com"
           git add package_versions.txt
           git commit -m "Bot Updating Package Versions" \
             -m "romm-broker ${{ inputs.broker_ref }}, package hash ${{ needs.test.outputs.pkg_hash }}" \
