@@ -1,0 +1,8 @@
+# actionlint ships a snapshot of popular actions' inputs, and its copy of
+# create-github-app-token predates v3's client-id input (app-id is the
+# deprecated one now). Drop these once actionlint's snapshot catches up.
+paths:
+  .github/workflows/build.yml:
+    ignore:
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'

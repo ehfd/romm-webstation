@@ -42,7 +42,7 @@ monitor_shadps4_no_fuse() {
   done
 }
 
-monitor_shadps4_no_fuse &
+monitor_shadps4_no_fuse 5 &
 
 # Start DE
 export PATH=$PATH:/usr/games

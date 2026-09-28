@@ -108,9 +108,10 @@ weekly check or a pull request asked for it.
 1. **Build** on one runner. The runner first reclaims disk with
    `ci/scripts/free-disk.sh`, then builds the Dockerfile and pushes the
    result to GHCR **by digest only**, with no tag. Nothing a user can pull
-   changes yet. Nothing is cached between builds: every emulator resolved to
-   "latest" has to be looked up fresh anyway, and the base image moves
-   weekly.
+   changes yet. Dolphin, Eden and Cemu are the exception: each is compiled
+   once per upstream version into
+   `ghcr.io/romm-streaming/romm-webstation-emulators` and copied in from
+   there, so only a new emulator release pays for a compile.
 2. **Test** on a second runner. It pulls that digest, generates
    `package_versions.txt` for it with syft plus the in image versions
    manifest, runs the smoke suite under `ci/` against a live container, and
@@ -119,9 +120,11 @@ weekly check or a pull request asked for it.
 3. **Publish** on a third runner, only if the tests passed. It points the real
    tags at the tested digest with `docker buildx imagetools create`, which
    is a manifest operation and uploads nothing. On stable builds it then
-   commits the new `package_versions.txt` to the default branch. Commits
-   made with the workflow token do not start other workflows, which is what
-   we want: this image is already built, tested and tagged.
+   commits the new `package_versions.txt` to the default branch as the
+   `romm-streaming-ci` GitHub App, the only actor allowed past `main`'s
+   ruleset. `push.yml` ignores that file, so the commit does not rebuild
+   the image it describes. These commits also keep the repository active,
+   which stops GitHub disabling its scheduled workflows after 60 idle days.
 4. **Cleanup** deletes the untagged digest when a candidate passed its tests
    but was deliberately not published: a dry run, a pull request, or a weekly
    rebuild that changed nothing. A candidate that **failed** its tests is left
