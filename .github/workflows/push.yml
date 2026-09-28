@@ -2,8 +2,8 @@
 # default branch rebuilds both channels and publishes them regardless of
 # whether the package hash moved: the Dockerfile or the overlay did.
 #
-# Bot commits of package_versions.txt are made with the workflow token and
-# never trigger this. Documentation only changes are ignored by path.
+# Bot commits of package_versions.txt come from the romm-streaming-ci app
+# and are ignored by path below, as are documentation only changes.
 name: Push to main
 run-name: "build stable + dev (push ${{ github.sha }})"
 
