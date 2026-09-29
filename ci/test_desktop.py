@@ -80,7 +80,9 @@ def test_context_honours_token(station: Station, desktop: dict) -> None:
     assert good.status_code == 200, good.text
     ctx = good.json()
     assert ctx["userRole"] == "controller"
-    assert ctx["iframeSrc"].startswith("stream/?token=")
+    src = urlparse(ctx["iframeSrc"])
+    carried = parse_qs(src.query).get("token", []) + parse_qs(src.fragment).get("token", [])
+    assert src.path == "stream/" and carried == [desktop["token"]], ctx["iframeSrc"]
 
 
 def test_stream_websocket_accepts_session_token(station: Station, desktop: dict) -> None:
@@ -108,6 +110,8 @@ def test_room_renders_desktop(station: Station, desktop: dict, artifacts: Path) 
     console: list[str] = []
     ws_urls: list[str] = []
     shot = artifacts / "desktop.png"
+    with station.client() as c:
+        iframe_src = c.get("/api/session/context", params={"token": desktop["token"]}).json()["iframeSrc"]
     with sync_playwright() as p:
         browser = p.chromium.launch(
             args=[
@@ -134,9 +138,12 @@ def test_room_renders_desktop(station: Station, desktop: dict, artifacts: Path) 
         browser.close()
 
     (artifacts / "desktop-console.log").write_text("\n".join(console))
-    assert any("/stream/api/websockets?token=" in u for u in ws_urls), (
-        f"no stream websocket opened: {ws_urls}"
-    )
+    stream = [u for u in ws_urls if "/stream/api/websockets" in u]
+    if "#token=" in iframe_src:
+        # selkies offers a fragment token as a WebSocket subprotocol, so no URL carries it
+        assert stream and not any("token=" in u for u in stream), f"stream websockets: {ws_urls}"
+    else:
+        assert any("?token=" in u for u in stream), f"no stream websocket opened: {ws_urls}"
     assert any("Stream started" in line for line in console), "selkies never reported the stream starting"
 
     im = Image.open(shot).convert("L")
