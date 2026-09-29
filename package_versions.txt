@@ -1732,7 +1732,7 @@ walk-up-path                                                                  3.
 watchdog                                                                      6.0.0                                   python                      
 watchfiles                                                                    1.3.0                                   python                      
 websockets                                                                    17.1                                    python                      
-webstation-broker                                                             0.11.0                                  python                      
+webstation-broker                                                             0.11.1                                  python                      
 wheel                                                                         0.45.1                                  python                      
 wheel                                                                         0.46.3                                  python                      
 which                                                                         2.0.2                                   npm                         
@@ -1802,9 +1802,9 @@ freedoom                                 https://github.com/freedoom/freedoom/re
 gzdoom                                   https://github.com/ZDoom/gzdoom/releases/download/g4.14.2/gzdoom_4.14.2_amd64.deb
 melonds                                  1.1
 modrinth                                 v0.21.6
-romm-broker                              v0.11.0
-rpcs3                                    https://github.com/RPCS3/rpcs3-binaries-linux/releases/download/build-1707d7fc883ef48ff21bdcbb0141a3211ae09cb2/rpcs3-v0.0.42-20076-1707d7fc_linux64.AppImage
+romm-broker                              v0.11.1
+rpcs3                                    https://github.com/RPCS3/rpcs3-binaries-linux/releases/download/build-52616e0f10e1a973920205202cfcc381b19ded63/rpcs3-v0.0.42-20078-52616e0f_linux64.AppImage
 shadps4-pkg-extractor                    https://github.com/AzaharPlus/shadPS4Plus/releases/download/PKG_EXTRACTOR_1_1/ShadPs4Plus-PkgExtractor-1.1-linux.zip
-shadps4-qtlauncher                       shadPS4QtLauncher-2026-09-28-c2fcf658335b6e83fb74713a33290c80a0cf9882
-xemu                                     https://github.com/xemu-project/xemu/releases/download/pre-release/xemu-0.8.136-49-gf9b14039e5-x86_64.AppImage
-xenia-edge                               b837246
+shadps4-qtlauncher                       shadPS4QtLauncher-2026-09-29-a976c6822c9e0659913cde1a141efb65dd477e40
+xemu                                     https://github.com/xemu-project/xemu/releases/download/pre-release/xemu-0.8.136-53-g478b4f4961-x86_64.AppImage
+xenia-edge                               1222c23
