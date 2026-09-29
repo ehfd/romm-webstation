@@ -1303,7 +1303,7 @@ libsrt1.5-gnutls                                                              1.
 libss2                                                                        1.47.2-3ubuntu4                         deb                         
 libssh-4                                                                      0.11.3-1ubuntu2.1                       deb                         
 libssh2-1t64                                                                  1.11.1-1ubuntu0.26.04.4                 deb                         
-libssl3t64                                                                    3.5.5-1ubuntu3.5                        deb                         
+libssl3t64                                                                    3.5.5-1ubuntu3.6                        deb                         
 libstartup-notification0                                                      0.12-8build1                            deb                         
 libstdc++-15-dev                                                              15.2.0-16ubuntu1                        deb                         
 libstdc++6                                                                    16-20260322-1ubuntu1                    deb                         
@@ -1520,8 +1520,8 @@ oauthlib                                                                      3.
 ocl-icd-libopencl1                                                            2.3.4-1                                 deb                         
 openbox                                                                       3.6.1-12ubuntu3                         deb                         
 openssh-client                                                                1:10.2p1-2ubuntu3.6                     deb                         
-openssl                                                                       3.5.5-1ubuntu3.5                        deb                         
-openssl-provider-legacy                                                       3.5.5-1ubuntu3.5                        deb                         
+openssl                                                                       3.5.5-1ubuntu3.6                        deb                         
+openssl-provider-legacy                                                       3.5.5-1ubuntu3.6                        deb                         
 p-map                                                                         7.0.4                                   npm                         
 p11-kit                                                                       0.26.2-2                                deb                         
 p11-kit-modules                                                               0.26.2-2                                deb                         
@@ -1732,7 +1732,7 @@ walk-up-path                                                                  3.
 watchdog                                                                      6.0.0                                   python                      
 watchfiles                                                                    1.3.0                                   python                      
 websockets                                                                    17.1                                    python                      
-webstation-broker                                                             0.11.1                                  python                      
+webstation-broker                                                             0.12.0                                  python                      
 wheel                                                                         0.45.1                                  python                      
 wheel                                                                         0.46.3                                  python                      
 which                                                                         2.0.2                                   npm                         
@@ -1802,9 +1802,9 @@ freedoom                                 https://github.com/freedoom/freedoom/re
 gzdoom                                   https://github.com/ZDoom/gzdoom/releases/download/g4.14.2/gzdoom_4.14.2_amd64.deb
 melonds                                  1.1
 modrinth                                 v0.21.6
-romm-broker                              v0.11.1
-rpcs3                                    https://github.com/RPCS3/rpcs3-binaries-linux/releases/download/build-52616e0f10e1a973920205202cfcc381b19ded63/rpcs3-v0.0.42-20078-52616e0f_linux64.AppImage
+romm-broker                              v0.12.0
+rpcs3                                    https://github.com/RPCS3/rpcs3-binaries-linux/releases/download/build-c96c2099b717bac25dd47ed2fea60b3e202d2108/rpcs3-v0.0.42-20090-c96c2099_linux64.AppImage
 shadps4-pkg-extractor                    https://github.com/AzaharPlus/shadPS4Plus/releases/download/PKG_EXTRACTOR_1_1/ShadPs4Plus-PkgExtractor-1.1-linux.zip
 shadps4-qtlauncher                       shadPS4QtLauncher-2026-09-29-a976c6822c9e0659913cde1a141efb65dd477e40
 xemu                                     https://github.com/xemu-project/xemu/releases/download/pre-release/xemu-0.8.136-53-g478b4f4961-x86_64.AppImage
-xenia-edge                               1222c23
+xenia-edge                               a7c39fa
